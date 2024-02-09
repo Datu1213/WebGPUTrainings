@@ -1,0 +1,189 @@
+<!doctype html>
+
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>WebGPU Life</title>
+  </head>
+  <body>
+    <canvas id="container" width="512" height="512"></canvas>
+    <script type="module">
+      const GRID_SIZE = 4;
+      const canvas = document.querySelector("canvas");
+
+      const adapter = await navigator.gpu.requestAdapter({
+        powerPreference: 'high-performance'
+      });
+      if (!adapter) {
+        throw new Error("No appropriate GPUAdapter found.");
+      }
+      adapter.requestAdapterInfo().then(e => { // Print GPU info
+        console.log(`GPU Architecturee: ${e.architecture.toUpperCase()}\n` + 
+                    `GPU Vendor:        ${e.vendor.toUpperCase()}`);
+      });
+      const device = await adapter.requestDevice(); // Get GPU device.
+      console.log(device);
+      const context = canvas.getContext("webgpu"); // Get Canvas context.
+      const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+      context.configure({ // Config divece and context texture format
+        device: device,
+        format: canvasFormat, // i.e. Width, Height of Canvas...
+      });
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: context.getCurrentTexture().createView(),
+          loadOp: "clear",
+          clearValue: [0, 0, 0.4, 1 ], // Or { r: 0, g: 0, b: 0.4, a: 1 }
+          storeOp: "store",
+        }],
+      });
+
+
+      
+
+      const vertices = new Float32Array([
+      //   X,    Y,
+        -0.8, -0.8, // Triangle 1 (Blue)
+         0.8, -0.8,
+         0.8,  0.8,
+
+        -0.8, -0.8, // Triangle 2 (Red)
+         0.8,  0.8,
+        -0.8,  0.8,
+      ]);
+
+      const vertexBuffer = device.createBuffer({
+        label: "Cell vertices", // Identity.
+        size: vertices.byteLength, // 4 Bytes * ArrayLength
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, // 1) Store vertices data. 2) A destination to which data could be copied
+      });
+      device.queue.writeBuffer(vertexBuffer, 0, vertices); // args: dst, offset, src; just like memcopy() in C language
+      const vertexBufferLayout = {
+        arrayStride: 8, // 2 float32 data --> 4 Bytes * 2 = 8 Bytes
+        attributes: [{
+          format: "float32x2", // Use 2 float32 data to indicate a 2D point
+          offset: 0, // Not zero if your data structure contains not only vertex data, 
+                     // i.e. {Point number, X, Y} -----> vertex data start from second index, so offset should be 1.
+          shaderLocation: 0, // Position
+        }],
+      };
+      const cellShaderModule = device.createShaderModule({
+        label: "Cell shader",
+        code: `
+          @group(0) @binding(0) var<uniform> grid: vec2f;
+          @group(0) @binding(1) var<uniform> cellIndex: vec2f;
+            
+          // @vertex
+          // fn vertexMain(@location(0) pos: vec2f) -> @builtin(position) vec4f { 
+          //     // Treat the left bottom corner as Cell(0, 0). 
+          //     // And in this case, you could simplize code as 
+          //     // "return vec4f((pos - (2 * (grid / 2 - cellIndex) - 1)) / grid, 0, 1);"
+          //     let x = (pos.x - (2 * (grid.x / 2 - cellIndex.x) - 1)) / grid.x;
+          //     let y = (pos.y - (2 * (grid.y / 2 - cellIndex.y) - 1)) / grid.y;
+          //     return vec4f(x, y, 0, 1); // Return input's position in clip space.
+          // }
+
+          @vertex
+          fn vertexMain(@location(0) pos: vec2f, @builtin(instance_index) instance: u32) -> @builtin(position) vec4f { 
+              // Use builtin value "instance"
+              let index = f32(instance);
+
+              // X-proir, left to right, bottom to top
+              // Tip: X change first!!!!
+              let xIndex = index % grid.y;
+              let yIndex = floor(index / grid.x);
+              let x = (pos.x - (2 * (grid.x / 2 - xIndex) - 1)) / grid.x;
+              let y = (pos.y - (2 * (grid.y / 2 - yIndex) - 1)) / grid.y;
+              return vec4f(x, y, 0, 1); // Return input's position in clip space.
+          }
+
+          @fragment
+          fn fragmentMain() -> @location(0) vec4f { // Return color of input position.
+              return vec4f(1, 0, 0, 1); // Standard red.
+          }
+        ` 
+      });
+
+      // BindGroupLayout
+      const bindGroupLayout = device.createBindGroupLayout({
+        entries: [{
+          binding: 0, // camera uniforms
+          visibility: GPUShaderStage.VERTEX,
+          buffer: {},
+        }, {
+          binding: 1, // c uniform
+          visibility: GPUShaderStage.VERTEX,
+          buffer: {},
+        }]
+      });
+
+      // PipelineLayout
+      const pipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [
+          bindGroupLayout, // @group(0)
+        ]
+      });
+      const cellPipeline = device.createRenderPipeline({
+        label: "Cell pipeline",
+        layout: pipelineLayout,
+        vertex: {
+          module: cellShaderModule,
+          entryPoint: "vertexMain",
+          buffers: [vertexBufferLayout]
+        },
+        fragment: {
+          module: cellShaderModule,
+          entryPoint: "fragmentMain",
+          targets: [{
+            format: canvasFormat
+          }]
+        }
+      });
+
+      // Create a uniform buffer that describes the grid.
+      const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]); // 48.0, 29.0
+      const uniformBuffer = device.createBuffer({
+        label: "Grid Uniforms",
+        size: uniformArray.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+
+      const cellIndex = new Float32Array([0, 0]); 
+      const cellIndexBuffer = device.createBuffer({
+        label: "CellIndex Uniforms",
+        size: cellIndex.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(cellIndexBuffer, 0, cellIndex);
+
+      
+
+      const bindGroup = device.createBindGroup({
+        label: "Cell renderer bind group",
+        layout: bindGroupLayout,
+        entries: [{
+          binding: 0,
+          resource: { buffer: uniformBuffer }
+        },
+        {
+          binding: 1,
+          resource: { buffer: cellIndexBuffer}
+        }],
+      });
+
+      pass.setPipeline(cellPipeline);
+      pass.setVertexBuffer(0, vertexBuffer);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE); // 6 vertices
+      pass.end(); // End pass
+      // const commandBuffer = encoder.finish(); // Store GPU commands, destroied immediately after use finish()
+      // So do not use
+      device.queue.submit([encoder.finish()]);
+
+      
+      
+    </script>
+  </body>
+</html>
