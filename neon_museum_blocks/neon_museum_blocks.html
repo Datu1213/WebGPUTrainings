@@ -6,9 +6,10 @@
     <title>WebGPU Life</title>
   </head>
   <body>
-    <canvas id="container" width="512" height="512"></canvas>
-    <script type="module">
-      const GRID_SIZE = 32;
+    <canvas id="container" width="1920" height="1080"></canvas>
+    <script type="module"> 
+      const GRID_SIZE_X = 96.0; // Mention that x is 
+      const GRID_SIZE_Y = 54.0; 
       const canvas = document.querySelector("canvas");
 
       const adapter = await navigator.gpu.requestAdapter({
@@ -88,7 +89,7 @@
 
               // X-proir, left to right, bottom to top
               // Tip: X change first!!!!
-              let xIndex = index % grid.y;
+              let xIndex = index % grid.x;
               let yIndex = floor(index / grid.x);
               let x = (pos.x - (2 * (grid.x / 2 - xIndex) - 1)) / grid.x;
               let y = (pos.y - (2 * (grid.y / 2 - yIndex) - 1)) / grid.y;
@@ -139,7 +140,7 @@
       });
 
       // Create a uniform buffer that describes the grid.
-      const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]); // 48.0, 29.0
+      const uniformArray = new Float32Array([GRID_SIZE_X, GRID_SIZE_Y]); // 48.0, 29.0
       const uniformBuffer = device.createBuffer({
         label: "Grid Uniforms",
         size: uniformArray.byteLength,
@@ -173,7 +174,7 @@
       pass.setPipeline(cellPipeline);
       pass.setVertexBuffer(0, vertexBuffer);
       pass.setBindGroup(0, bindGroup);
-      pass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE); // 6 vertices
+      pass.draw(vertices.length / 2, GRID_SIZE_X * GRID_SIZE_Y); // 6 vertices
       pass.end(); // End pass
       // const commandBuffer = encoder.finish(); // Store GPU commands, destroied immediately after use finish()
       // So do not use
